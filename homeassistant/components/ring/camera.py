@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 import logging
 from typing import TYPE_CHECKING, Any, Generic
+import asyncio
+import time
 
 from aiohttp import web
 from haffmpeg.camera import CameraMjpeg
@@ -154,19 +156,58 @@ class RingCam(RingEntity[RingDoorBell], Camera):
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
         """Return a still image response from the camera."""
-        key = (width, height)
-        if not (image := self._images.get(key)) and self._video_url is not None:
-            image = await ffmpeg.async_get_image(
-                self.hass,
-                self._video_url,
-                width=width,
-                height=height,
+        # Generate a unique session ID for this image capture
+        session_id = f"image_{int(time.time())}"
+        
+        # Create a queue to receive the WebRTC messages
+        message_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        
+        async def message_handler(message: RingWebRtcMessage) -> None:
+            """Handle WebRTC messages and capture first frame."""
+            if message.error_code:
+                message_queue.put_nowait(None)
+            elif message.answer:
+                # Once we have the answer, we can start capturing frames
+                try:
+                    # TODO: Implement frame capture from WebRTC stream
+                    # For now, this is a placeholder that needs to be implemented
+                    # We would need to:
+                    # 1. Set up WebRTC data channel
+                    # 2. Request a frame
+                    # 3. Receive and decode the frame
+                    # 4. Convert to bytes
+                    print("message.answer", message.answer)
+                    await asyncio.sleep(1)  # Simulate frame capture
+                    message_queue.put_nowait(None)  # Signal no image for now
+                except Exception as ex:
+                    _LOGGER.error("Failed to capture frame: %s", str(ex))
+                    message_queue.put_nowait(None)
+                finally:
+                    # Clean up the WebRTC session
+                    self._device.sync_close_webrtc_stream(session_id)
+
+        try:
+            # Create WebRTC offer
+            offer_sdp = "v=0\r\n"  # Minimal SDP offer
+            await self._device.generate_async_webrtc_stream(
+                offer_sdp, session_id, message_handler
             )
-
-            if image:
-                self._images[key] = image
-
-        return image
+            
+            # Wait for image capture
+            try:
+                async with asyncio.timeout(10):  # 10 second timeout
+                    image = await message_queue.get()
+                    return image
+            except asyncio.TimeoutError:
+                _LOGGER.error("Timeout waiting for camera image")
+                return None
+                
+        except Exception as ex:
+            _LOGGER.error("Failed to get camera image: %s", str(ex))
+            return None
+        finally:
+            # Ensure WebRTC session is cleaned up
+            self._device.sync_close_webrtc_stream(session_id)
 
     async def handle_async_mjpeg_stream(
         self, request: web.Request
