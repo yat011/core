@@ -15,7 +15,6 @@ from haffmpeg.camera import CameraMjpeg
 from ring_doorbell import RingDoorBell
 from ring_doorbell.webrtcstream import RingWebRtcMessage
 
-from .webrtc_client import RingWebRTCClient
 
 from homeassistant.components import ffmpeg
 from homeassistant.components.camera import (
@@ -127,7 +126,7 @@ class RingCam(RingEntity[RingDoorBell], Camera):
             self._attr_supported_features |= CameraEntityFeature.STREAM
 
         self._has_webrtc_stream = False
-        self._webrtc_client: RingWebRTCClient | None = None
+        # self._webrtc_client: RingWebRTCClient | None = None
 
     @callback
     def _handle_coordinator_update(self) -> None:
