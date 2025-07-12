@@ -37,6 +37,7 @@ from . import RingConfigEntry
 from .const import DOMAIN
 from .coordinator import RingDataCoordinator
 from .entity import RingDeviceT, RingEntity, exception_wrap
+from .webrtc_client import get_image_from_ring_webrtc_stream
 
 # Coordinator is used to centralize the data updates
 # Actions restricted to 1 at a time
@@ -125,7 +126,7 @@ class RingCam(RingEntity[RingDoorBell], Camera):
         if description.live_stream:
             self._attr_supported_features |= CameraEntityFeature.STREAM
 
-        self._has_webrtc_stream = False
+        self._getting_image = False
         # self._webrtc_client: RingWebRTCClient | None = None
 
     @callback
@@ -160,287 +161,15 @@ class RingCam(RingEntity[RingDoorBell], Camera):
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
         """Return a still image response from the camera."""
-
-        # Generate a valid WebRTC offer SDP with a unique session ID
-        session_id = str(int(time.time() * 1000))
-        offer_sdp = (
-            f"v=0\r\n"
-            f"o=- {session_id} 2 IN IP4 127.0.0.1\r\n"
-            f"s=-\r\n"
-            f"t=0 0\r\n"
-            f"a=group:BUNDLE 0 1\r\n"
-            f"a=extmap-allow-mixed\r\n"
-            f"a=msid-semantic: WMS\r\n"
-            f"m=audio 9 UDP/TLS/RTP/SAVPF 111 63 9 0 8 13 110 126\r\n"
-            f"c=IN IP4 0.0.0.0\r\n"
-            f"a=rtcp:9 IN IP4 0.0.0.0\r\n"
-            f"a=ice-ufrag:d+sg\r\n"
-            f"a=ice-pwd:rh83OrDBymg0ys+ImCG1pFWd\r\n"
-            f"a=ice-options:trickle\r\n"
-            f"a=fingerprint:sha-256 94:1E:57:6B:76:E7:79:E6:F1:37:CA:99:1E:7B:8F:F3:C7:A0:5A:E5:8C:DA:04:FA:40:F5:49:21:D0:9E:E2:15\r\n"
-            f"a=setup:actpass\r\n"
-            f"a=mid:0\r\n"
-            f"a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\n"
-            f"a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time\r\n"
-            f"a=extmap:3 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01\r\n"
-            f"a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n"
-            f"a=recvonly\r\n"
-            f"a=rtcp-mux\r\n"
-            f"a=rtcp-rsize\r\n"
-            f"a=rtpmap:111 opus/48000/2\r\n"
-            f"a=rtcp-fb:111 transport-cc\r\n"
-            f"a=fmtp:111 minptime=10;useinbandfec=1\r\n"
-            f"a=rtpmap:63 red/48000/2\r\n"
-            f"a=fmtp:63 111/111\r\n"
-            f"a=rtpmap:9 G722/8000\r\n"
-            f"a=rtpmap:0 PCMU/8000\r\n"
-            f"a=rtpmap:8 PCMA/8000\r\n"
-            f"a=rtpmap:13 CN/8000\r\n"
-            f"a=rtpmap:110 telephone-event/48000\r\n"
-            f"a=rtpmap:126 telephone-event/8000\r\n"
-            f"m=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99 100 101 35 36 37 38 103 104 107 108 109 114 115 116 117 118 39 40 41 42 43 44 45 46 47 48 119 120 121 122 49 50 51 52 123 124 125 53\r\n"
-            f"c=IN IP4 0.0.0.0\r\n"
-            f"a=rtcp:9 IN IP4 0.0.0.0\r\n"
-            f"a=ice-ufrag:d+sg\r\n"
-            f"a=ice-pwd:rh83OrDBymg0ys+ImCG1pFWd\r\n"
-            f"a=ice-options:trickle\r\n"
-            f"a=fingerprint:sha-256 94:1E:57:6B:76:E7:79:E6:F1:37:CA:99:1E:7B:8F:F3:C7:A0:5A:E5:8C:DA:04:FA:40:F5:49:21:D0:9E:E2:15\r\n"
-            f"a=setup:actpass\r\n"
-            f"a=mid:1\r\n"
-            f"a=extmap:14 urn:ietf:params:rtp-hdrext:toffset\r\n"
-            f"a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time\r\n"
-            f"a=extmap:13 urn:3gpp:video-orientation\r\n"
-            f"a=extmap:3 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01\r\n"
-            f"a=extmap:5 http://www.webrtc.org/experiments/rtp-hdrext/playout-delay\r\n"
-            f"a=extmap:6 http://www.webrtc.org/experiments/rtp-hdrext/video-content-type\r\n"
-            f"a=extmap:7 http://www.webrtc.org/experiments/rtp-hdrext/video-timing\r\n"
-            f"a=extmap:8 http://www.webrtc.org/experiments/rtp-hdrext/color-space\r\n"
-            f"a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n"
-            f"a=extmap:10 urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id\r\n"
-            f"a=extmap:11 urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id\r\n"
-            f"a=recvonly\r\n"
-            f"a=rtcp-mux\r\n"
-            f"a=rtcp-rsize\r\n"
-            f"a=rtpmap:96 VP8/90000\r\n"
-            f"a=rtcp-fb:96 goog-remb\r\n"
-            f"a=rtcp-fb:96 transport-cc\r\n"
-            f"a=rtcp-fb:96 ccm fir\r\n"
-            f"a=rtcp-fb:96 nack\r\n"
-            f"a=rtcp-fb:96 nack pli\r\n"
-            f"a=rtpmap:97 rtx/90000\r\n"
-            f"a=fmtp:97 apt=96\r\n"
-            f"a=rtpmap:98 VP9/90000\r\n"
-            f"a=rtcp-fb:98 goog-remb\r\n"
-            f"a=rtcp-fb:98 transport-cc\r\n"
-            f"a=rtcp-fb:98 ccm fir\r\n"
-            f"a=rtcp-fb:98 nack\r\n"
-            f"a=rtcp-fb:98 nack pli\r\n"
-            f"a=fmtp:98 profile-id=0\r\n"
-            f"a=rtpmap:99 rtx/90000\r\n"
-            f"a=fmtp:99 apt=98\r\n"
-            f"a=rtpmap:100 VP9/90000\r\n"
-            f"a=rtcp-fb:100 goog-remb\r\n"
-            f"a=rtcp-fb:100 transport-cc\r\n"
-            f"a=rtcp-fb:100 ccm fir\r\n"
-            f"a=rtcp-fb:100 nack\r\n"
-            f"a=rtcp-fb:100 nack pli\r\n"
-            f"a=fmtp:100 profile-id=2\r\n"
-            f"a=rtpmap:101 rtx/90000\r\n"
-            f"a=fmtp:101 apt=100\r\n"
-            f"a=rtpmap:35 VP9/90000\r\n"
-            f"a=rtcp-fb:35 goog-remb\r\n"
-            f"a=rtcp-fb:35 transport-cc\r\n"
-            f"a=rtcp-fb:35 ccm fir\r\n"
-            f"a=rtcp-fb:35 nack\r\n"
-            f"a=rtcp-fb:35 nack pli\r\n"
-            f"a=fmtp:35 profile-id=1\r\n"
-            f"a=rtpmap:36 rtx/90000\r\n"
-            f"a=fmtp:36 apt=35\r\n"
-            f"a=rtpmap:37 VP9/90000\r\n"
-            f"a=rtcp-fb:37 goog-remb\r\n"
-            f"a=rtcp-fb:37 transport-cc\r\n"
-            f"a=rtcp-fb:37 ccm fir\r\n"
-            f"a=rtcp-fb:37 nack\r\n"
-            f"a=rtcp-fb:37 nack pli\r\n"
-            f"a=fmtp:37 profile-id=3\r\n"
-            f"a=rtpmap:38 rtx/90000\r\n"
-            f"a=fmtp:38 apt=37\r\n"
-            f"a=rtpmap:103 H264/90000\r\n"
-            f"a=rtcp-fb:103 goog-remb\r\n"
-            f"a=rtcp-fb:103 transport-cc\r\n"
-            f"a=rtcp-fb:103 ccm fir\r\n"
-            f"a=rtcp-fb:103 nack\r\n"
-            f"a=rtcp-fb:103 nack pli\r\n"
-            f"a=fmtp:103 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f\r\n"
-            f"a=rtpmap:104 rtx/90000\r\n"
-            f"a=fmtp:104 apt=103\r\n"
-            f"a=rtpmap:107 H264/90000\r\n"
-            f"a=rtcp-fb:107 goog-remb\r\n"
-            f"a=rtcp-fb:107 transport-cc\r\n"
-            f"a=rtcp-fb:107 ccm fir\r\n"
-            f"a=rtcp-fb:107 nack\r\n"
-            f"a=rtcp-fb:107 nack pli\r\n"
-            f"a=fmtp:107 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f\r\n"
-            f"a=rtpmap:108 rtx/90000\r\n"
-            f"a=fmtp:108 apt=107\r\n"
-            f"a=rtpmap:109 H264/90000\r\n"
-            f"a=rtcp-fb:109 goog-remb\r\n"
-            f"a=rtcp-fb:109 transport-cc\r\n"
-            f"a=rtcp-fb:109 ccm fir\r\n"
-            f"a=rtcp-fb:109 nack\r\n"
-            f"a=rtcp-fb:109 nack pli\r\n"
-            f"a=fmtp:109 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n"
-            f"a=rtpmap:114 rtx/90000\r\n"
-            f"a=fmtp:114 apt=109\r\n"
-            f"a=rtpmap:115 H264/90000\r\n"
-            f"a=rtcp-fb:115 goog-remb\r\n"
-            f"a=rtcp-fb:115 transport-cc\r\n"
-            f"a=rtcp-fb:115 ccm fir\r\n"
-            f"a=rtcp-fb:115 nack\r\n"
-            f"a=rtcp-fb:115 nack pli\r\n"
-            f"a=fmtp:115 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f\r\n"
-            f"a=rtpmap:116 rtx/90000\r\n"
-            f"a=fmtp:116 apt=115\r\n"
-            f"a=rtpmap:117 H264/90000\r\n"
-            f"a=rtcp-fb:117 goog-remb\r\n"
-            f"a=rtcp-fb:117 transport-cc\r\n"
-            f"a=rtcp-fb:117 ccm fir\r\n"
-            f"a=rtcp-fb:117 nack\r\n"
-            f"a=rtcp-fb:117 nack pli\r\n"
-            f"a=fmtp:117 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f\r\n"
-            f"a=rtpmap:118 rtx/90000\r\n"
-            f"a=fmtp:118 apt=117\r\n"
-            f"a=rtpmap:39 H264/90000\r\n"
-            f"a=rtcp-fb:39 goog-remb\r\n"
-            f"a=rtcp-fb:39 transport-cc\r\n"
-            f"a=rtcp-fb:39 ccm fir\r\n"
-            f"a=rtcp-fb:39 nack\r\n"
-            f"a=rtcp-fb:39 nack pli\r\n"
-            f"a=fmtp:39 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=4d001f\r\n"
-            f"a=rtpmap:40 rtx/90000\r\n"
-            f"a=fmtp:40 apt=39\r\n"
-            f"a=rtpmap:41 H264/90000\r\n"
-            f"a=rtcp-fb:41 goog-remb\r\n"
-            f"a=rtcp-fb:41 transport-cc\r\n"
-            f"a=rtcp-fb:41 ccm fir\r\n"
-            f"a=rtcp-fb:41 nack\r\n"
-            f"a=rtcp-fb:41 nack pli\r\n"
-            f"a=fmtp:41 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=f4001f\r\n"
-            f"a=rtpmap:42 rtx/90000\r\n"
-            f"a=fmtp:42 apt=41\r\n"
-            f"a=rtpmap:43 H264/90000\r\n"
-            f"a=rtcp-fb:43 goog-remb\r\n"
-            f"a=rtcp-fb:43 transport-cc\r\n"
-            f"a=rtcp-fb:43 ccm fir\r\n"
-            f"a=rtcp-fb:43 nack\r\n"
-            f"a=rtcp-fb:43 nack pli\r\n"
-            f"a=fmtp:43 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=f4001f\r\n"
-            f"a=rtpmap:44 rtx/90000\r\n"
-            f"a=fmtp:44 apt=43\r\n"
-            f"a=rtpmap:45 AV1/90000\r\n"
-            f"a=rtcp-fb:45 goog-remb\r\n"
-            f"a=rtcp-fb:45 transport-cc\r\n"
-            f"a=rtcp-fb:45 ccm fir\r\n"
-            f"a=rtcp-fb:45 nack\r\n"
-            f"a=rtcp-fb:45 nack pli\r\n"
-            f"a=fmtp:45 level-idx=5;profile=0;tier=0\r\n"
-            f"a=rtpmap:46 rtx/90000\r\n"
-            f"a=fmtp:46 apt=45\r\n"
-            f"a=rtpmap:47 AV1/90000\r\n"
-            f"a=rtcp-fb:47 goog-remb\r\n"
-            f"a=rtcp-fb:47 transport-cc\r\n"
-            f"a=rtcp-fb:47 ccm fir\r\n"
-            f"a=rtcp-fb:47 nack\r\n"
-            f"a=rtcp-fb:47 nack pli\r\n"
-            f"a=fmtp:47 level-idx=5;profile=1;tier=0\r\n"
-            f"a=rtpmap:48 rtx/90000\r\n"
-            f"a=fmtp:48 apt=47\r\n"
-            f"a=rtpmap:119 H264/90000\r\n"
-            f"a=rtcp-fb:119 goog-remb\r\n"
-            f"a=rtcp-fb:119 transport-cc\r\n"
-            f"a=rtcp-fb:119 ccm fir\r\n"
-            f"a=rtcp-fb:119 nack\r\n"
-            f"a=rtcp-fb:119 nack pli\r\n"
-            f"a=fmtp:119 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=64001f\r\n"
-            f"a=rtpmap:120 rtx/90000\r\n"
-            f"a=fmtp:120 apt=119\r\n"
-            f"a=rtpmap:121 H264/90000\r\n"
-            f"a=rtcp-fb:121 goog-remb\r\n"
-            f"a=rtcp-fb:121 transport-cc\r\n"
-            f"a=rtcp-fb:121 ccm fir\r\n"
-            f"a=rtcp-fb:121 nack\r\n"
-            f"a=rtcp-fb:121 nack pli\r\n"
-            f"a=fmtp:121 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=64001f\r\n"
-            f"a=rtpmap:122 rtx/90000\r\n"
-            f"a=fmtp:122 apt=121\r\n"
-            f"a=rtpmap:49 H265/90000\r\n"
-            f"a=rtcp-fb:49 goog-remb\r\n"
-            f"a=rtcp-fb:49 transport-cc\r\n"
-            f"a=rtcp-fb:49 ccm fir\r\n"
-            f"a=rtcp-fb:49 nack\r\n"
-            f"a=rtcp-fb:49 nack pli\r\n"
-            f"a=fmtp:49 level-id=180;profile-id=1;tier-flag=0;tx-mode=SRST\r\n"
-            f"a=rtpmap:50 rtx/90000\r\n"
-            f"a=fmtp:50 apt=49\r\n"
-            f"a=rtpmap:51 H265/90000\r\n"
-            f"a=rtcp-fb:51 goog-remb\r\n"
-            f"a=rtcp-fb:51 transport-cc\r\n"
-            f"a=rtcp-fb:51 ccm fir\r\n"
-            f"a=rtcp-fb:51 nack\r\n"
-            f"a=rtcp-fb:51 nack pli\r\n"
-            f"a=fmtp:51 level-id=180;profile-id=2;tier-flag=0;tx-mode=SRST\r\n"
-            f"a=rtpmap:52 rtx/90000\r\n"
-            f"a=fmtp:52 apt=51\r\n"
-            f"a=rtpmap:123 red/90000\r\n"
-            f"a=rtpmap:124 rtx/90000\r\n"
-            f"a=fmtp:124 apt=123\r\n"
-            f"a=rtpmap:125 ulpfec/90000\r\n"
-            f"a=rtpmap:53 flexfec-03/90000\r\n"
-            f"a=rtcp-fb:53 goog-remb\r\n"
-            f"a=rtcp-fb:53 transport-cc\r\n"
-            f"a=fmtp:53 repair-window=10000000\r\n"
-        )
-
-        # Create a queue to receive the WebRTC messages
-        message_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
-
-        def message_handler(message: RingWebRtcMessage) -> None:
-            """Handle WebRTC messages and capture first frame."""
-            if message.error_code:
-                message_queue.put_nowait(None)
-            elif message.answer:
-                # TODO: Implement frame capture from WebRTC stream
-                message_queue.put_nowait(None)  # Signal no image for now
-            else:
-                print("Unknown message type", message)
+        if self._getting_image:
+            return
 
         try:
-            # Only create a new stream if one does not already exist
-            if not self._has_webrtc_stream:
-                self._has_webrtc_stream = True
-                await self._device.generate_async_webrtc_stream(
-                    offer_sdp, session_id, message_handler, keep_alive_timeout=None
-                )
-            else:
-                _LOGGER.debug(f"WebRTC stream for session {session_id} already exists.")
-
-            # Wait for image capture
-            try:
-                async with asyncio.timeout(20):
-                    image = await message_queue.get()
-                    return image
-            except asyncio.TimeoutError:
-                print("Timeout waiting for camera image")
-                return None
-            finally:
-                self._has_webrtc_stream = False
-
-        except Exception as ex:
-            _LOGGER.error("Failed to get camera image: %s", str(ex))
-            return None
+            self._getting_image = True
+            img = await get_image_from_ring_webrtc_stream(self._device)
+            return img
         finally:
-            # Ensure WebRTC session is cleaned up
-            self._device.sync_close_webrtc_stream(session_id)
+            self._getting_image = False
 
     async def handle_async_mjpeg_stream(
         self, request: web.Request
