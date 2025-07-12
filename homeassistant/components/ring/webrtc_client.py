@@ -131,7 +131,7 @@ async def get_image_from_ring_webrtc_stream(doorbell: RingDoorBell) -> bytes | N
             print("Streaming started. Press Ctrl+C to stop.")
             print(f"Images will be saved to: {output_dir}")
 
-            async with asyncio.timeout(100):
+            async with asyncio.timeout(10):
                 return await video_track.recv()
     finally:
         await pc.close()

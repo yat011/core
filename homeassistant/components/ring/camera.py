@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 import logging
-from typing import TYPE_CHECKING, Any, Generic
-import asyncio
 import time
+from typing import TYPE_CHECKING, Any, Generic
 
 from aiohttp import web
 from haffmpeg.camera import CameraMjpeg
 from ring_doorbell import RingDoorBell
 from ring_doorbell.webrtcstream import RingWebRtcMessage
-
 
 from homeassistant.components import ffmpeg
 from homeassistant.components.camera import (
@@ -42,6 +41,7 @@ from .webrtc_client import get_image_from_ring_webrtc_stream
 # Coordinator is used to centralize the data updates
 # Actions restricted to 1 at a time
 PARALLEL_UPDATES = 1
+IMAGE_INTERVAL = 600  # 10 mins
 
 FORCE_REFRESH_INTERVAL = timedelta(minutes=3)
 MOTION_DETECTION_CAPABILITY = "motion_detection"
@@ -127,6 +127,8 @@ class RingCam(RingEntity[RingDoorBell], Camera):
             self._attr_supported_features |= CameraEntityFeature.STREAM
 
         self._getting_image = False
+        self._last_image_time = None
+        self._last_image = None
         # self._webrtc_client: RingWebRTCClient | None = None
 
     @callback
@@ -161,15 +163,16 @@ class RingCam(RingEntity[RingDoorBell], Camera):
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
         """Return a still image response from the camera."""
-        if self._getting_image:
-            return
 
-        try:
-            self._getting_image = True
+        current_time = time.time()
+        if (
+            self._last_image_time is None
+            or (current_time - self._last_image_time) > IMAGE_INTERVAL
+        ):
             img = await get_image_from_ring_webrtc_stream(self._device)
-            return img
-        finally:
-            self._getting_image = False
+            self._last_image = img
+            self._last_image_time = current_time
+        return self._last_image
 
     async def handle_async_mjpeg_stream(
         self, request: web.Request
