@@ -41,7 +41,7 @@ from .webrtc_client import get_image_from_ring_webrtc_stream
 # Coordinator is used to centralize the data updates
 # Actions restricted to 1 at a time
 PARALLEL_UPDATES = 1
-IMAGE_INTERVAL = 600  # 10 mins
+IMAGE_INTERVAL = 0  # 10 mins
 
 FORCE_REFRESH_INTERVAL = timedelta(minutes=3)
 MOTION_DETECTION_CAPABILITY = "motion_detection"

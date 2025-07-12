@@ -44,11 +44,11 @@ class VideoTransformTrack(VideoStreamTrack):
 
             # Convert frame to numpy array for processing
             img = frame.to_ndarray(format="bgr24")
-            current_time = datetime.now()
-            timestamp = current_time.strftime("%Y%m%d_%H%M%S")
-            filename = output_dir / f"ring_doorbell_{timestamp}.jpg"
-            cv2.imwrite(str(filename), img)
-            print(f"Saved image: {filename}")
+            # current_time = datetime.now()
+            # timestamp = current_time.strftime("%Y%m%d_%H%M%S")
+            # filename = output_dir / f"ring_doorbell_{timestamp}.jpg"
+            # cv2.imwrite(str(filename), img)
+            # print(f"Saved image: {filename}")
             
             # Convert to JPEG bytes for Home Assistant
             _, buffer = cv2.imencode('.jpg', img)
